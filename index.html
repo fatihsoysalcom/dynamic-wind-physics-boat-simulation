@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TinyWind Physics Demo</title>
+    <style>
+        body { margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #222; font-family: sans-serif; color: #eee; }
+        canvas { background-color: #004466; border: 2px solid #002233; }
+        #info { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="info">
+        <h3>Wind Physics Demo</h3>
+        <p>Use <strong>Left/Right Arrow</strong> to steer the boat.</p>
+        <p>Wind direction and speed change dynamically.</p>
+        <p>Boat speed is affected by its orientation relative to the wind.</p>
+        <p>Wind Direction: <span id="windDir"></span>°</p>
+        <p>Wind Speed: <span id="windSpd"></span> units</p>
+        <p>Boat Heading: <span id="boatHead"></span>°</p>
+        <p>Boat Speed: <span id="boatSpd"></span> units/frame</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = 800;
+        canvas.height = 600;
+
+        // Game state
+        let boat = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            heading: 0, // radians, 0 is right
+            speed: 0
+        };
+
+        let wind = {
+            direction: Math.PI / 2, // radians, 0 is right, PI/2 is down
+            speed: 5
+        };
+
+        // Constants
+        const BOAT_SIZE = 20;
+        const BASE_BOAT_SPEED = 1; // Minimum speed even with no wind
+        const BOAT_ROTATION_SPEED = 0.05; // radians per frame
+        const WIND_MAX_SPEED = 10;
+        const WIND_CHANGE_INTERVAL = 5000; // ms
+        const WIND_CHANGE_AMOUNT = Math.PI / 4; // radians
+
+        let lastWindChangeTime = 0;
+        let keys = {};
+
+        // Helper to normalize angles to -PI to PI
+        function normalizeAngle(angle) {
+            return (angle + Math.PI) % (2 * Math.PI) - Math.PI;
+        }
+
+        // --- Drawing Functions ---
+        function drawBoat() {
+            ctx.save();
+            ctx.translate(boat.x, boat.y);
+            ctx.rotate(boat.heading);
+
+            // Boat body (triangle)
+            ctx.beginPath();
+            ctx.moveTo(BOAT_SIZE, 0);
+            ctx.lineTo(-BOAT_SIZE / 2, -BOAT_SIZE / 2);
+            ctx.lineTo(-BOAT_SIZE / 2, BOAT_SIZE / 2);
+            ctx.closePath();
+            ctx.fillStyle = '#8B4513'; // Brown
+            ctx.fill();
+            ctx.strokeStyle = '#5A2E0C';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Sail (rectangle)
+            ctx.fillStyle = '#F0F8FF'; // AliceBlue
+            ctx.fillRect(-BOAT_SIZE / 2, -BOAT_SIZE / 2, BOAT_SIZE / 2, BOAT_SIZE);
+
+            ctx.restore();
+        }
+
+        function drawWindArrow() {
+            const arrowLength = 50;
+            const arrowHeadSize = 10;
+            const centerX = canvas.width - 70;
+            const centerY = 70;
+
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(wind.direction); // Rotate to wind direction
+
+            ctx.beginPath();
+            ctx.moveTo(-arrowLength / 2, 0);
+            ctx.lineTo(arrowLength / 2, 0); // Line for wind direction
+            ctx.strokeStyle = '#ADD8E6'; // LightBlue
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Arrow head
+            ctx.beginPath();
+            ctx.moveTo(arrowLength / 2, 0);
+            ctx.lineTo(arrowLength / 2 - arrowHeadSize, -arrowHeadSize / 2);
+            ctx.lineTo(arrowLength / 2 - arrowHeadSize, arrowHeadSize / 2);
+            ctx.closePath();
+            ctx.fillStyle = '#ADD8E6';
+            ctx.fill();
+
+            ctx.restore();
+
+            // Wind speed indicator (circles)
+            ctx.fillStyle = '#ADD8E6';
+            for (let i = 0; i < wind.speed; i++) {
+                ctx.beginPath();
+                ctx.arc(centerX + (i - wind.speed / 2) * 8, centerY + 30, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // --- Update Functions ---
+        function updateBoat(deltaTime) {
+            // Handle input for boat rotation
+            if (keys['ArrowLeft']) {
+                boat.heading -= BOAT_ROTATION_SPEED;
+            }
+            if (keys['ArrowRight']) {
+                boat.heading += BOAT_ROTATION_SPEED;
+            }
+
+            // Calculate effective wind force based on boat's heading relative to wind
+            // Wind is blowing FROM `wind.direction + PI`
+            const windSourceAngle = normalizeAngle(wind.direction + Math.PI);
+            const relativeWindAngle = normalizeAngle(windSourceAngle - boat.heading);
+
+            // The effective component of wind pushing the boat forward
+            // Max push when wind is directly from behind (relativeWindAngle = 0)
+            // No push when wind is directly from front (relativeWindAngle = PI)
+            // This simulates sails catching wind. Only positive cosine contributes to forward speed.
+            const windContributionFactor = Math.max(0, Math.cos(relativeWindAngle)); // CORE CONCEPT ILLUSTRATION
+
+            boat.speed = BASE_BOAT_SPEED + (wind.speed * 0.5 * windContributionFactor); // Scale wind speed effect
+
+            // Update boat position
+            boat.x += Math.cos(boat.heading) * boat.speed;
+            boat.y += Math.sin(boat.heading) * boat.speed;
+
+            // Wrap around screen edges
+            if (boat.x < -BOAT_SIZE) boat.x = canvas.width + BOAT_SIZE;
+            if (boat.x > canvas.width + BOAT_SIZE) boat.x = -BOAT_SIZE;
+            if (boat.y < -BOAT_SIZE) boat.y = canvas.height + BOAT_SIZE;
+            if (boat.y > canvas.height + BOAT_SIZE) boat.y = -BOAT_SIZE;
+        }
+
+        function updateWind(currentTime) {
+            if (currentTime - lastWindChangeTime > WIND_CHANGE_INTERVAL) {
+                lastWindChangeTime = currentTime;
+                // Randomly change wind direction and speed
+                wind.direction = normalizeAngle(wind.direction + (Math.random() - 0.5) * WIND_CHANGE_AMOUNT * 2);
+                wind.speed = 2 + Math.random() * (WIND_MAX_SPEED - 2); // Min speed 2
+            }
+        }
+
+        function updateInfo() {
+            document.getElementById('windDir').textContent = Math.round(wind.direction * 180 / Math.PI);
+            document.getElementById('windSpd').textContent = wind.speed.toFixed(1);
+            document.getElementById('boatHead').textContent = Math.round(boat.heading * 180 / Math.PI);
+            document.getElementById('boatSpd').textContent = boat.speed.toFixed(2);
+        }
+
+        // --- Game Loop ---
+        let lastTime = 0;
+        function gameLoop(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            updateWind(currentTime);
+            updateBoat(deltaTime);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBoat();
+            drawWindArrow();
+            updateInfo();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Start the game loop
+        gameLoop(0);
+    </script>
+</body>
+</html>
